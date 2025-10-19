@@ -2,6 +2,10 @@
 **Total Starred Repositories:** 36 ⭐
 
 _Last updated: 2025-10-19 14:34:03 UTC_
+# 🌟 My GitHub Star Universe
+<p align="center">
+  <img src="https://capsule-render.vercel.app/api?type=waving&color=0:FFD700,100:FFAE42&height=180&text=⭐%20My%20Starred%20Repos%20⭐&fontSize=36" />
+</p>
 
 ## Python (17)
 - [labplus-cn/awesome-mpython](https://github.com/labplus-cn/awesome-mpython) — 掌控板资源精选 https://labplus-cn.github.io/awesome-mpython/
