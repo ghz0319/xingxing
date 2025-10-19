@@ -3,7 +3,7 @@ name: Update GitHub Starred Projects Index
 on:
   workflow_dispatch:
   schedule:
-    - cron: '0 6 * * *'  # 每天 UTC 6:00（北京时间 14:00）自动执行
+    - cron: '0 6 * * *'
 
 jobs:
   update-stars:
@@ -16,122 +16,91 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: 3.11
+          python-version: '3.11'
 
       - name: Install dependencies
         run: pip install requests matplotlib
 
-      - name: Generate stars.md and language chart
+      - name: Generate stars section only
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
         run: |
-          mkdir -p scripts
           cat > scripts/update_stars.py <<'EOF'
-          import requests, datetime, os, collections, matplotlib.pyplot as plt
+          import requests, os, datetime, collections, matplotlib.pyplot as plt, re, io
 
-          GH_TOKEN = os.getenv("GH_TOKEN")
           user = "ghz0319"
-          headers = {"Authorization": f"token {GH_TOKEN}"} if GH_TOKEN else {}
-
+          token = os.getenv("GH_TOKEN")
+          headers = {"Authorization": f"token {token}"} if token else {}
           url = f"https://api.github.com/users/{user}/starred?per_page=100"
-          md = [
-              "# 🌟 GitHub Starred Projects Index\n",
-              f"_Last updated: {datetime.datetime.now(datetime.UTC).strftime('%Y-%m-%d %H:%M:%S')} UTC_\n\n"
-          ]
 
           total = 0
-          lang_count = collections.Counter()
+          langs = collections.Counter()
           by_lang = collections.defaultdict(list)
+          now = datetime.datetime.now(datetime.UTC).strftime('%Y-%m-%d %H:%M:%S')
 
           while url:
               r = requests.get(url, headers=headers)
-              if r.status_code != 200:
-                  raise SystemExit(f"❌ GitHub API Error: {r.status_code}")
               data = r.json()
               for repo in data:
                   total += 1
+                  lang = repo.get("language") or "🗂️ Others"
                   name = repo["full_name"]
                   html = repo["html_url"]
                   desc = repo.get("description") or ""
-                  lang = repo.get("language") or "🗂️ Others"
                   by_lang[lang].append(f"- [{name}]({html}) — {desc.strip()}\n")
-                  lang_count[lang] += 1
+                  langs[lang] += 1
               url = r.links.get("next", {}).get("url")
 
-          md.insert(1, f"**Total Starred Repositories:** {total} ⭐\n\n")
-
-          for lang, repos in sorted(by_lang.items(), key=lambda x: (-len(x[1]), x[0].lower())):
-              md.append(f"## {lang} ({len(repos)})\n")
-              md.extend(repos)
-              md.append("\n")
-
-          with open("stars.md", "w", encoding="utf-8") as f:
-              f.writelines(md)
-
-          # --- 保存统计数据，用于 README 更新 ---
-          now = datetime.datetime.now(datetime.UTC).strftime('%Y-%m-%d %H:%M:%S')
-          with open("sync_info.txt", "w") as f:
-              f.write(f"{total}|{now}")
-
           # --- 生成语言饼图 ---
-          if lang_count:
-              labels = list(lang_count.keys())
-              sizes = list(lang_count.values())
+          if langs:
               plt.figure(figsize=(6, 6))
-              plt.pie(sizes, labels=labels, autopct='%1.1f%%', startangle=140)
+              plt.pie(langs.values(), labels=langs.keys(), autopct='%1.1f%%', startangle=140)
               plt.title(f"Language Distribution ({total} repos)")
               plt.tight_layout()
-              plt.savefig("lang_chart.svg", format="svg")
-              print("✅ Language chart generated: lang_chart.svg")
+              plt.savefig("lang_chart.svg")
+
+          # --- 构建更新区块 ---
+          content = io.StringIO()
+          content.write(f"**Total Starred Repositories:** {total} ⭐\n\n")
+          content.write(f"_Last updated: {now} UTC_\n\n")
+
+          for lang, repos in sorted(by_lang.items(), key=lambda x: (-len(x[1]), x[0])):
+              content.write(f"## {lang} ({len(repos)})\n")
+              content.writelines(repos)
+              content.write("\n")
+
+          new_block = content.getvalue()
+
+          # --- 只替换 stars.md 的自动更新区 ---
+          path = "stars.md"
+          start_marker = "<!-- AUTO-GENERATED START -->"
+          end_marker = "<!-- AUTO-GENERATED END -->"
+
+          if os.path.exists(path):
+              text = open(path, encoding="utf-8").read()
           else:
-              print("⚠️ No language data found.")
+              text = "# 🌟 GitHub Starred Projects Index\n\n"
+
+          if start_marker in text and end_marker in text:
+              updated = re.sub(f"{start_marker}.*?{end_marker}",
+                               f"{start_marker}\n{new_block}\n{end_marker}",
+                               text, flags=re.S)
+          else:
+              updated = text + f"\n\n{start_marker}\n{new_block}\n{end_marker}\n"
+
+          with open(path, "w", encoding="utf-8") as f:
+              f.write(updated)
+          print("✅ stars.md updated safely without losing header.")
           EOF
 
           python scripts/update_stars.py
 
-      - name: Update README badges and chart
-        run: |
-          set +e
-          if [ -f sync_info.txt ]; then
-            IFS='|' read total lastsync < sync_info.txt
-            echo "✅ Updating README.md with total=$total, lastsync=$lastsync"
-
-            # 更新星标总数
-            if grep -q "🌟 Total Stars:" README.md; then
-              sed -i "s/🌟 Total Stars:.*/🌟 Total Stars: ${total}/" README.md
-            else
-              echo "🌟 Total Stars: ${total}" >> README.md
-            fi
-
-            # 更新时间
-            if grep -q "⏰ Last Sync:" README.md; then
-              sed -i "s/⏰ Last Sync:.*/⏰ Last Sync: ${lastsync} UTC/" README.md
-            else
-              echo "⏰ Last Sync: ${lastsync} UTC" >> README.md
-            fi
-
-            # 更新语言饼图引用
-            if grep -q "![Language Chart]" README.md; then
-              echo "🖼 Updating existing chart reference"
-            else
-              echo -e "\n## 🧩 Language Distribution\n\n![Language Chart](lang_chart.svg)\n" >> README.md
-            fi
-          else
-            echo "⚠️ sync_info.txt not found, skipping README update."
-          fi
-          set -e
-
-      - name: Commit and push changes
+      - name: Commit and push
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          git add stars.md README.md lang_chart.svg || true
-          if git diff --cached --quiet; then
-            echo "🟢 No changes to commit."
-          else
-            git commit -m "Auto update stars.md, README.md and chart"
-            git push https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git HEAD:main
-          fi
+          git add stars.md lang_chart.svg || true
+          git commit -m "Update stars section safely" || echo "No changes"
+          git push
